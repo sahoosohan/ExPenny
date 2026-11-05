@@ -7,13 +7,13 @@
 
 ## 1. Overview
 
-A full-stack web app to record daily expenses, search and manage them, see monthly spending per category on a dashboard, and get a visible warning when spending crosses a monthly budget set for a category.
+A full-stack web app where people sign in with Google to record daily expenses, search and manage them, see monthly spending per category on a dashboard, and get a visible warning when spending crosses a monthly budget set for a category. Each account's expenses and budgets are private to that account.
 
 **Goal:** a polished, fully working portfolio project that demonstrates full-stack skills: REST API design, input validation, SQL aggregation (GROUP BY, SUM), and a clean component-based UI.
 
 ## 2. Target User
 
-An individual who wants a simple, fast way to log expenses and stay within monthly category budgets. Single user, no login in v1.
+An individual who wants a simple, fast way to log expenses and stay within monthly category budgets. Multiple people can use the app, each with a separate Google-authenticated account and private data.
 
 ## 3. Scope
 
@@ -27,7 +27,7 @@ An individual who wants a simple, fast way to log expenses and stay within month
 7. Responsive layout, light/dark mode
 
 ### Out of scope (v1)
-Authentication, multi-user, recurring expenses, multi-currency, receipt upload, bank sync, mobile app.
+Recurring expenses, multi-currency, receipt upload, bank sync, mobile app.
 
 ## 4. Functional Requirements
 
@@ -40,6 +40,15 @@ Authentication, multi-user, recurring expenses, multi-currency, receipt upload, 
 | E4 | List is sorted by date (newest first) and paginated (20 per page) |
 | E5 | Search by title/notes (debounced, 300 ms), filter by category and date range |
 | E6 | Amount must be > 0, max 2 decimals; date cannot be more than 1 day in the future; title 1–100 chars |
+
+### 4.1.1 Accounts and access
+| ID | Requirement |
+|----|-------------|
+| A1 | User can create an account or sign in using Google's Identity Services button |
+| A2 | Backend verifies Google's signed ID token and identifies the account by Google's stable `sub` claim |
+| A3 | Browser receives a revocable HTTP-only session cookie; the raw session token is never stored in the database |
+| A4 | Expenses, budgets, summaries and trends are always scoped to the signed-in account |
+| A5 | User can sign out and revoke the current session |
 
 ### 4.2 Categories
 Fixed, seeded list: Food, Transport, Rent, Utilities, Shopping, Health, Entertainment, Education, Travel, Other. Each has a color and icon used across the UI.
@@ -83,8 +92,18 @@ CREATE TABLE categories (
   icon  TEXT NOT NULL
 );
 
+CREATE TABLE users (
+  id         INTEGER PRIMARY KEY,
+  google_sub TEXT NOT NULL UNIQUE,
+  email      TEXT NOT NULL UNIQUE,
+  name       TEXT NOT NULL,
+  picture    TEXT,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE expenses (
   id          INTEGER PRIMARY KEY,
+  user_id     INTEGER NOT NULL REFERENCES users(id),
   title       TEXT    NOT NULL CHECK (length(title) BETWEEN 1 AND 100),
   amount      NUMERIC NOT NULL CHECK (amount > 0),
   category_id INTEGER NOT NULL REFERENCES categories(id),
@@ -98,8 +117,10 @@ CREATE INDEX idx_expenses_category ON expenses(category_id);
 
 CREATE TABLE budgets (
   id            INTEGER PRIMARY KEY,
-  category_id   INTEGER NOT NULL UNIQUE REFERENCES categories(id),
-  monthly_limit NUMERIC NOT NULL CHECK (monthly_limit > 0)
+  user_id       INTEGER NOT NULL REFERENCES users(id),
+  category_id   INTEGER NOT NULL REFERENCES categories(id),
+  monthly_limit NUMERIC NOT NULL CHECK (monthly_limit > 0),
+  UNIQUE (user_id, category_id)
 );
 ```
 
@@ -111,8 +132,9 @@ SELECT c.id, c.name, c.color,
 FROM categories c
 LEFT JOIN expenses e
        ON e.category_id = c.id
+      AND e.user_id = :user_id
       AND e.date >= :month_start AND e.date < :next_month_start
-LEFT JOIN budgets b ON b.category_id = c.id
+LEFT JOIN budgets b ON b.category_id = c.id AND b.user_id = :user_id
 GROUP BY c.id, c.name, c.color, b.monthly_limit
 ORDER BY spent DESC;
 ```
@@ -123,6 +145,9 @@ Base path: `/api/v1`. JSON only. Errors: `{ "detail": "message" }` (422 for vali
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| POST | `/auth/google` | Verify Google credential and create a browser session |
+| GET | `/auth/me` | Return the current account |
+| POST | `/auth/logout` | Revoke the current browser session |
 | GET | `/categories` | List categories |
 | GET | `/expenses` | List with `q`, `category_id`, `date_from`, `date_to`, `page`, `page_size` |
 | POST | `/expenses` | Create (returns expense + `alerts` array if a budget is crossed) |
@@ -184,7 +209,7 @@ expense-tracker/
 └── .gitignore
 ```
 
-**Libraries:** SQLAlchemy 2.x, Pydantic v2, Uvicorn, pytest, httpx | React 18, Vite, TypeScript, React Router, TanStack Query, React Hook Form, Zod, Recharts, date-fns, lucide-react
+**Libraries:** SQLAlchemy 2.x, Pydantic v2, Uvicorn, Google Auth, pytest, httpx | React 18, Vite, TypeScript, React Router, TanStack Query, React Hook Form, Zod, Recharts, date-fns, lucide-react, Google Identity Services
 
 ## 10. Milestones
 
@@ -203,6 +228,9 @@ expense-tracker/
 
 ## 11. Acceptance Criteria
 
+- [ ] Google sign-up creates a user record; a returning Google account signs in to the same account
+- [ ] Expenses, budgets, dashboard totals and trends for one user are not visible to another user
+- [ ] Signing out revokes the current browser session
 - [ ] Add, edit, delete and search expenses all work with no console or server errors
 - [ ] Invalid input is rejected with clear messages on both client and server
 - [ ] Dashboard totals exactly match the sum of expenses for the selected month
@@ -222,4 +250,4 @@ expense-tracker/
 
 ## 13. Future Ideas (v2)
 
-Auth, recurring expenses, per-month budgets, CSV export/import, multi-currency, email alerts, PWA.
+Recurring expenses, per-month budgets, CSV export/import, multi-currency, email alerts, PWA.

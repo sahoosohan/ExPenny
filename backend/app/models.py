@@ -12,7 +12,6 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,7 +30,31 @@ class Category(Base):
 
     # Relationships
     expenses: Mapped[list["Expense"]] = relationship(back_populates="category")
-    budget: Mapped["Budget | None"] = relationship(back_populates="category")
+    budgets: Mapped[list["Budget"]] = relationship(back_populates="category")
+
+
+class User(Base):
+    """Application account linked to a verified Google identity."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    google_sub: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    picture: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False, default=dt.datetime.utcnow)
+
+
+class LoginSession(Base):
+    """Revocable, database-backed browser session. Only a hash of the token is stored."""
+
+    __tablename__ = "login_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False, index=True)
 
 
 class Expense(Base):
@@ -43,9 +66,11 @@ class Expense(Base):
         CheckConstraint("amount > 0", name="ck_amount_positive"),
         Index("idx_expenses_date", "date"),
         Index("idx_expenses_category", "category_id"),
+        Index("idx_expenses_user_date", "user_id", "date"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     title: Mapped[str] = mapped_column(String(100), nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), nullable=False)
@@ -63,17 +88,18 @@ class Expense(Base):
 
 
 class Budget(Base):
-    """Monthly budget limit for a category (one limit per category, applies every month)."""
+    """Monthly category limit for one account (applies every month)."""
 
     __tablename__ = "budgets"
     __table_args__ = (
         CheckConstraint("monthly_limit > 0", name="ck_budget_positive"),
-        UniqueConstraint("category_id", name="uq_budget_category"),
+        Index("uq_budgets_user_category", "user_id", "category_id", unique=True),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"), nullable=False)
     monthly_limit: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
 
     # Relationships
-    category: Mapped["Category"] = relationship(back_populates="budget")
+    category: Mapped["Category"] = relationship(back_populates="budgets")
